@@ -1,61 +1,64 @@
-/*
-  Description:
-*/
+#include <avr/sleep.h>
+#include <avr/wdt.h>
 
-#include <LowPower.h>
+// Define the number of watchdog intervals needed for approximately 10 minutes.
+// The watchdog timer can be set to 8 seconds, so 75 intervals make 10 minutes (75 * 8 seconds = 600 seconds).
+const int intervalsUntilAction = 75;
+volatile int watchdogCounter = 0;
 
-const int moisturePin1 = A1; // Adjust pins as per your connections
-const int moisturePin2 = A2;
-const int moisturePin3 = A3;
-const int interruptPin = A0; // ADC_0 pin
-const int threshold = 150;
+
+// This ISR will be triggered when the watchdog timer expires
+ISR(WDT_vect) {
+  if (++watchdogCounter >= intervalsUntilAction) {
+    // Reset the counter
+    watchdogCounter = 0;
+
+    // Perform the action after waking up
+    digitalWrite(LED_BUILTIN, HIGH); // Turn on the LED
+    delay(1000); // Keep it on for 1 second
+    digitalWrite(LED_BUILTIN, LOW); // Turn off the LED
+  }
+}
+
 
 void setup() {
-
   Serial.begin(9600);
-  
-  // Initialize your sensor pins
-  pinMode(moisturePin1, INPUT);
-  pinMode(moisturePin2, INPUT);
-  pinMode(moisturePin3, INPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
 
-  // Attach interrupt for waking up
-  attachInterrupt(digitalPinToInterrupt(interruptPin), wakeUp, RISING);
-  
-  // initialize digital pin LED_BUILTIN as an output.
-  pinMode(2, OUTPUT);
+  // Configure the Watchdog
+  MCUSR &= ~(1 << WDRF); // Clear the reset flag
+  WDTCSR |= (1 << WDCE) | (1 << WDE); // Allow changes, disable reset, set timeout to 8 seconds
+  WDTCSR = (1 << WDIE) | (1 << WDP3) | (1 << WDP0); // Set interrupt mode and 8-second period
+
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN); // Set sleep mode to power down
+  sleep_enable(); // Enable sleep mode
 }
 
-// the loop function runs over and over again forever
+
 void loop() {
+  // Prepare to sleep
+  noInterrupts(); // Disable interrupts
+  wdt_reset(); // Reset the watchdog
+  ADCSRA &= ~(1 << ADEN); // Disable ADC
+  power_all_disable(); // Power down all peripherals
+  sleep_bod_disable(); // Disable brown-out detection
 
-  // Read moisture levels
-  //int moisture1 = analogRead(moisturePin1);
-  //int moisture2 = analogRead(moisturePin2);
-  //int moisture3 = analogRead(moisturePin3);
+  interrupts(); // Enable interrupts
 
+  // Go to sleep
+  sleep_cpu(); // Put the CPU to sleep
 
-  digitalWrite(2, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(3000);                       // wait for a second
-  digitalWrite(2, LOW);    // turn the LED off by making the voltage LOW
-  delay(3000);                       // wait for a second
+  // The program will continue from here after waking up
+  sleep_disable(); // Disable sleep mode
+  power_all_enable(); // Re-enable all peripherals
+  ADCSRA |= (1 << ADEN); // Re-enable ADC
 
-
-  // Turn off ADC
-  ADCSRA &= ~(1<<ADEN);
-
-  // Disable the analog comparator
-  ACSR |= (1<<ACD);
-  
-  LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
-
-  // Turn on ADC
-  ADCSRA |= (1<<ADEN);
+  // A small delay to prevent possible unwanted rapid re-triggering of WDT (e.g., due to noise)
+  delay(100);
 }
 
-
-void wakeUp() {
-  // This function will be called once the interrupt is triggered
-  // No need to put any code here unless you want to perform a specific action upon waking up
-  detachInterrupt(digitalPinToInterrupt(interruptPin)); // Detach interrupt to avoid repeated triggering
+void goToSleep() {
+  sleep_enable(); // Enable sleep mode
+  sleep_cpu(); // Go to sleep
+  sleep_disable(); // Wake up here
 }
