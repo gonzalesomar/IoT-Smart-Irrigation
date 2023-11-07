@@ -1,42 +1,37 @@
 #include <avr/sleep.h>
+#include <avr/power.h>
 #include <avr/wdt.h>
 
-// Define the number of watchdog intervals needed for approximately 10 minutes.
-// The watchdog timer can be set to 8 seconds, so 75 intervals make 10 minutes (75 * 8 seconds = 600 seconds).
-const int intervalsUntilAction = 75;
+const int intervalsUntilAction = 1; // Number of watchdog intervals for 10 minutes
 volatile int watchdogCounter = 0;
+volatile bool ledState = false; // This will keep track of the LED state
 
-
-// This ISR will be triggered when the watchdog timer expires
+// Watchdog Timer Interrupt Service Routine (ISR)
 ISR(WDT_vect) {
   if (++watchdogCounter >= intervalsUntilAction) {
     // Reset the counter
     watchdogCounter = 0;
-
-    // Perform the action after waking up
-    digitalWrite(LED_BUILTIN, HIGH); // Turn on the LED
-    delay(1000); // Keep it on for 1 second
-    digitalWrite(LED_BUILTIN, LOW); // Turn off the LED
+    // Toggle the LED state
+    ledState = !ledState; 
+    digitalWrite(2, ledState ? HIGH : LOW);
   }
 }
 
-
 void setup() {
   Serial.begin(9600);
-  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(2, OUTPUT);
 
-  // Configure the Watchdog
+  // Configure the Watchdog Timer to 8 seconds
   MCUSR &= ~(1 << WDRF); // Clear the reset flag
-  WDTCSR |= (1 << WDCE) | (1 << WDE); // Allow changes, disable reset, set timeout to 8 seconds
-  WDTCSR = (1 << WDIE) | (1 << WDP3) | (1 << WDP0); // Set interrupt mode and 8-second period
+  WDTCSR |= (1 << WDCE) | (1 << WDE); // Start timed sequence
+  WDTCSR = (1 << WDIE) | (1 << WDP3) | (1 << WDP0); // Set interrupt mode and 8-second interval
 
-  set_sleep_mode(SLEEP_MODE_PWR_DOWN); // Set sleep mode to power down
-  sleep_enable(); // Enable sleep mode
+  // Set sleep mode to power down
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
 }
 
-
 void loop() {
-  // Prepare to sleep
+  // Prepare to sleep by turning off various modules
   noInterrupts(); // Disable interrupts
   wdt_reset(); // Reset the watchdog
   ADCSRA &= ~(1 << ADEN); // Disable ADC
@@ -44,21 +39,23 @@ void loop() {
   sleep_bod_disable(); // Disable brown-out detection
 
   interrupts(); // Enable interrupts
+  sleep_enable(); // Enable sleep mode
 
   // Go to sleep
-  sleep_cpu(); // Put the CPU to sleep
+  sleep_cpu();
 
-  // The program will continue from here after waking up
-  sleep_disable(); // Disable sleep mode
+  // The processor will wake up here after the watchdog timer expires
+
+  // Disable sleep and re-enable peripherals
+  sleep_disable();
   power_all_enable(); // Re-enable all peripherals
   ADCSRA |= (1 << ADEN); // Re-enable ADC
 
-  // A small delay to prevent possible unwanted rapid re-triggering of WDT (e.g., due to noise)
-  delay(100);
-}
-
-void goToSleep() {
-  sleep_enable(); // Enable sleep mode
-  sleep_cpu(); // Go to sleep
-  sleep_disable(); // Wake up here
+  // Handle LED state changes outside of ISR
+  if (ledState) {
+    // If the LED was turned on, keep it on for 1 second, then turn it off
+    delay(3000); // Keep it on for 1 second
+    digitalWrite(2, LOW); // Turn off the LED
+    ledState = false; // Reset the LED state
+  }
 }
